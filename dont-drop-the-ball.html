@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07080d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Drop the Ball">
+<title>Don't Drop the Ball · a tilt game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ color-scheme: dark; }
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body{
+    height:100%; width:100%; overflow:hidden; position:fixed; inset:0;
+    background:#07080d !important; color:#e7e9f0 !important;
+    forced-color-adjust:none;
+    touch-action:none; overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+    font-family:'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  canvas{ position:fixed; inset:0; display:block; }
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5;
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    padding:calc(env(safe-area-inset-top, 0px) + 10px) 14px 8px;
+    font-size:12px; letter-spacing:.08em; pointer-events:none;
+  }
+  #hud .grp{ display:flex; gap:10px; align-items:center; }
+  #hudLevel{ color:#9aa1b5 !important; }
+  #hudScore{ font-weight:700; }
+  #hudLives{ color:#ff4555 !important; letter-spacing:.2em; }
+  #hud button{
+    pointer-events:auto; font:inherit; font-size:13px; line-height:1;
+    color:#e7e9f0 !important; background:rgba(255,255,255,.06) !important;
+    border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:7px 10px;
+  }
+  #hud button:active{ background:rgba(255,255,255,.18) !important; }
+
+  /* ---------- Overlays ---------- */
+  .overlay{
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:20px; text-align:center; padding:28px;
+    background:rgba(7,8,13,.84) !important;
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  }
+  .hidden{ display:none !important; }
+  h1{
+    font-size:clamp(30px, 9.5vw, 46px); font-weight:800; line-height:1.06; letter-spacing:.01em;
+  }
+  h1 em{ font-style:normal; color:#ff4555 !important; text-shadow:0 0 22px rgba(255,69,85,.55); }
+  .sub{ font-size:11px; color:#9aa1b5 !important; letter-spacing:.22em; text-transform:uppercase; }
+  .rules{ display:flex; flex-direction:column; gap:9px; font-size:13px; color:#c6cbda !important; line-height:1.5; }
+  .rules .cy{ color:#22d3ee !important; font-weight:700; }
+  .rules .rd{ color:#ff4555 !important; font-weight:700; }
+  .btn{
+    font-family:inherit; font-weight:800; font-size:15px; letter-spacing:.12em;
+    color:#0a0c14 !important; background:#ff4555 !important; border:0; border-radius:999px;
+    padding:17px 32px; box-shadow:0 0 30px rgba(255,69,85,.4);
+  }
+  .btn:active{ transform:scale(.97); }
+  .note{ font-size:11px; color:#6b7280 !important; max-width:310px; line-height:1.6; }
+  .warn{ color:#fbbf24 !important; }
+  .big{ font-size:clamp(26px, 8vw, 40px); font-weight:800; letter-spacing:.02em; }
+  .big.rd{ color:#ff4555 !important; }
+  .big.cy{ color:#22d3ee !important; }
+  .scoreline{ font-size:14px; color:#9aa1b5 !important; line-height:1.8; }
+  .scoreline b{ color:#e7e9f0 !important; }
+  #brand{ position:fixed; bottom:calc(env(safe-area-inset-bottom,0px) + 10px); left:0; right:0;
+    text-align:center; font-size:10px; letter-spacing:.25em; color:#3c4152 !important; z-index:4; pointer-events:none; }
+
+  /* ---------- Rotate prompt ---------- */
+  #rotate{
+    position:fixed; inset:0; z-index:60; background:#07080d !important;
+    display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    font-size:13px; letter-spacing:.15em; color:#9aa1b5 !important;
+  }
+  #rotate .ic{ font-size:34px; }
+  @media (orientation: landscape) and (pointer: coarse){
+    #rotate{ display:flex; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cvs"></canvas>
+
+<div id="hud">
+  <div class="grp"><span id="hudLevel">LV 1 · 0/5</span></div>
+  <div class="grp">
+    <span id="hudScore">0000</span>
+    <span id="hudLives">●●●</span>
+    <button id="calBtn" aria-label="Recalibrate tilt" title="Recalibrate tilt">◎</button>
+    <button id="muteBtn" aria-label="Toggle sound" title="Toggle sound">🔊</button>
+  </div>
+</div>
+
+<div id="menu" class="overlay">
+  <div>
+    <h1>DON'T DROP<br><em>THE BALL</em></h1>
+    <div class="sub" style="margin-top:10px">a tilt gauntlet · 5 levels</div>
+  </div>
+  <div class="rules">
+    <div>tilt your phone to roll the marble</div>
+    <div>collect every <span class="cy">● pip</span> to clear the level</div>
+    <div>the <span class="rd">◉ voids</span> pull. don't get taken</div>
+  </div>
+  <button id="playBtn" class="btn">ENABLE TILT &amp; PLAY</button>
+  <div class="note" id="menuNote">iOS will ask for motion access. hold the phone at a comfy angle when you tap play: that becomes neutral. ◎ recalibrates anytime.</div>
+</div>
+
+<div id="msg" class="overlay hidden"></div>
+
+<div id="rotate"><div class="ic">⟳</div><div>ROTATE TO PORTRAIT</div></div>
+<div id="brand">DON'T SHOOT THE DATA</div>
+
+<script>
+'use strict';
+
+/* ================= helpers ================= */
+const $ = s => document.querySelector(s);
+const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
+const lerp = (a,b,t) => a + (b - a) * t;
+const dist2 = (x1,y1,x2,y2) => { const dx=x2-x1, dy=y2-y1; return dx*dx + dy*dy; };
+
+/* ================= constants ================= */
+const VW = 390, VH = 640;          // virtual playfield
+const BALL_R = 13;
+const ACC = 2600;                  // px/s^2 at full tilt
+const DRAG = 1.6;                  // linear drag /s
+const REST = 0.45;                 // wall restitution
+const MAXV = 1050;                 // speed cap px/s
+const FALL_TIME = 0.45;            // seconds, hole swallow anim
+const PULL_PAD = 26;               // gravity-well reach beyond hole rim
+const PULL_STR = 700;              // gravity-well strength
+
+/* ================= levels =================
+   walls: [x, y, w, h]   holes: [x, y, r]   pellets: [x, y]  */
+const LEVELS = [
+  { name:'WARM-UP', start:[195,580],
+    walls:[],
+    holes:[[195,320,26]],
+    pellets:[[60,80],[330,80],[195,180],[60,460],[330,460]] },
+
+  { name:'S-BEND', start:[40,590],
+    walls:[[0,180,250,14],[140,400,250,14]],
+    holes:[[320,120,22],[70,300,22],[195,520,22]],
+    pellets:[[50,90],[195,60],[340,300],[180,300],[60,560],[330,560]] },
+
+  { name:'THE COMBS', start:[40,590],
+    walls:[[80,0,14,460],[200,180,14,460],[320,0,14,460]],
+    holes:[[150,120,22],[245,440,22],[150,470,20]],
+    pellets:[[40,60],[150,300],[150,560],[260,60],[260,520],[356,80],[356,300]] },
+
+  { name:'FOUR ROOMS', start:[330,590],
+    walls:[[0,150,150,14],[240,150,150,14],[60,320,330,14],[0,470,270,14]],
+    holes:[[195,95,20],[195,245,20],[110,400,20],[310,520,20]],
+    pellets:[[40,60],[195,60],[350,60],[350,240],[200,400],[60,560]] },
+
+  { name:'THE GAUNTLET', start:[195,600],
+    walls:[[50,120,120,14],[220,220,170,14],[0,330,170,14],[220,430,170,14]],
+    holes:[[110,180,18],[280,180,18],[195,280,20],[110,380,18],[280,380,18],[60,560,18],[330,560,18]],
+    pellets:[[30,60],[195,60],[360,60],[360,280],[30,280],[30,480],[360,480],[195,480]] },
+];
+
+/* ================= state ================= */
+let state = 'menu';   // menu | playing | falling | clear | over | won | paused
+let levelIdx = 0, score = 0, lives = 3, best = 0, levelTime = 0;
+let walls = [], holes = [], pellets = [];
+const ball = { x:195, y:580, vx:0, vy:0, r:BALL_R };
+let ballScale = 1;
+let fall = null;
+let trail = [], particles = [];
+let toastMsg = '', toastT = 0;
+let msgGuard = 0;
+
+/* ================= canvas ================= */
+const cvs = $('#cvs'), ctx = cvs.getContext('2d');
+let dpr = 1, scale = 1, ox = 0, oy = 0, vig = null;
+
+function resize(){
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = window.innerWidth, h = window.innerHeight;
+  cvs.width = Math.round(w * dpr);
+  cvs.height = Math.round(h * dpr);
+  cvs.style.width = w + 'px';
+  cvs.style.height = h + 'px';
+  const hudH = ($('#hud').offsetHeight || 46) + 4;
+  const availW = w - 20, availH = h - hudH - 34;
+  scale = Math.min(availW / VW, availH / VH);
+  ox = (w - VW * scale) / 2;
+  oy = hudH + (availH - VH * scale) / 2 + 2;
+  vig = ctx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.35, w/2, h/2, Math.max(w,h)*0.75);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.55)');
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+/* ================= input: tilt ================= */
+let tiltX = 0, tiltY = 0;
+let rawB = 0, rawG = 0, baseB = 0, baseG = 0;
+let haveSensor = false, needCal = false;
+
+function shapeAxis(v){
+  v = clamp(v, -40, 40) / 40;
+  return Math.sign(v) * Math.pow(Math.abs(v), 1.25);
+}
+function onOrient(e){
+  if (e.beta == null || e.gamma == null) return;
+  rawB = e.beta; rawG = e.gamma; haveSensor = true;
+  if (needCal){ baseB = rawB; baseG = rawG; needCal = false; }
+  const b = rawB - baseB, g = rawG - baseG;
+  let ang = 0;
+  if (screen.orientation && typeof screen.orientation.angle === 'number') ang = screen.orientation.angle;
+  else if (typeof window.orientation === 'number') ang = window.orientation;
+  let x, y;
+  switch (ang){
+    case 90:  x = b;  y = -g; break;
+    case -90:
+    case 270: x = -b; y = g;  break;
+    case 180: x = -g; y = -b; break;
+    default:  x = g;  y = b;
+  }
+  tiltX = shapeAxis(x);
+  tiltY = shapeAxis(y);
+}
+async function requestTilt(){
+  const DOE = window.DeviceOrientationEvent;
+  if (!DOE) return false;
+  if (typeof DOE.requestPermission === 'function'){
+    try {
+      const r = await DOE.requestPermission();
+      if (r !== 'granted') return false;
+    } catch (err){ return false; }
+  }
+  window.addEventListener('deviceorientation', onOrient, true);
+  return true;
+}
+function calibrate(){
+  if (haveSensor){ baseB = rawB; baseG = rawG; }
+  needCal = !haveSensor;
+}
+
+/* ================= input: keys (desktop test) ================= */
+const keys = new Set();
+const KEYMAP = { ArrowLeft:[-1,0], a:[-1,0], ArrowRight:[1,0], d:[1,0], ArrowUp:[0,-1], w:[0,-1], ArrowDown:[0,1], s:[0,1] };
+window.addEventListener('keydown', e => {
+  if (KEYMAP[e.key]){ keys.add(e.key); e.preventDefault(); }
+});
+window.addEventListener('keyup', e => { keys.delete(e.key); });
+function keyTilt(){
+  let kx = 0, ky = 0;
+  for (const k of keys){ kx += KEYMAP[k][0]; ky += KEYMAP[k][1]; }
+  return keys.size ? [clamp(kx,-1,1)*0.55, clamp(ky,-1,1)*0.55] : null;
+}
+const isTouch = () => window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+
+/* ================= audio ================= */
+let AC = null, muted = false, lastBounceSfx = 0;
+function initAudio(){
+  if (AC) { AC.resume && AC.resume(); return; }
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (Ctor) AC = new Ctor();
+}
+function tone(freq, dur, type, gain, slideTo){
+  if (muted || !AC) return;
+  const t0 = AC.currentTime;
+  const o = AC.createOscillator(), v = AC.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  v.gain.setValueAtTime(gain || 0.12, t0);
+  v.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(v); v.connect(AC.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+const sfxCollect = () => { tone(740, .08, 'sine', .12); setTimeout(() => tone(988, .1, 'sine', .12), 60); };
+const sfxFall    = () => tone(320, .45, 'sawtooth', .14, 70);
+const sfxBounce  = () => { const n = performance.now(); if (n - lastBounceSfx > 70){ lastBounceSfx = n; tone(120, .04, 'square', .05); } };
+const sfxClear   = () => [523,659,784,1046].forEach((f,i) => setTimeout(() => tone(f, .12, 'sine', .11), i*90));
+const buzz = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
+
+/* ================= flow ================= */
+const hudLevel = $('#hudLevel'), hudScore = $('#hudScore'), hudLives = $('#hudLives');
+const menuEl = $('#menu'), msgEl = $('#msg');
+
+function updateHUD(){
+  const total = pellets.length;
+  const got = pellets.filter(p => p.c).length;
+  hudLevel.textContent = 'LV ' + (levelIdx + 1) + ' · ' + got + '/' + total;
+  hudScore.textContent = String(score).padStart(4, '0');
+  hudLives.textContent = '●'.repeat(lives) + '○'.repeat(Math.max(0, 3 - lives));
+}
+function toast(m){ toastMsg = m; toastT = 1.7; }
+
+function loadLevel(i){
+  const L = LEVELS[i];
+  walls   = L.walls.map(a => ({ x:a[0], y:a[1], w:a[2], h:a[3] }));
+  holes   = L.holes.map(a => ({ x:a[0], y:a[1], r:a[2] }));
+  pellets = L.pellets.map(a => ({ x:a[0], y:a[1], c:false }));
+  ball.x = L.start[0]; ball.y = L.start[1]; ball.vx = 0; ball.vy = 0;
+  ballScale = 1; fall = null; trail = []; particles = []; levelTime = 0;
+  toast('LEVEL ' + (i + 1) + ' · ' + L.name);
+  updateHUD();
+}
+function startRun(){
+  score = 0; lives = 3; levelIdx = 0;
+  loadLevel(0);
+  hideMsg(); menuEl.classList.add('hidden');
+  state = 'playing';
+}
+function respawn(){
+  const L = LEVELS[levelIdx];
+  ball.x = L.start[0]; ball.y = L.start[1]; ball.vx = 0; ball.vy = 0;
+  ballScale = 1; trail = [];
+  burst(ball.x, ball.y, '#e7e9f0', 8);
+  state = 'playing';
+}
+function showMsg(html, onTap){
+  msgEl.innerHTML = html;
+  msgEl.classList.remove('hidden');
+  msgGuard = performance.now();
+  msgEl.onclick = () => {
+    if (performance.now() - msgGuard < 350) return;
+    if (onTap) onTap();
+  };
+}
+function hideMsg(){ msgEl.classList.add('hidden'); msgEl.onclick = null; }
+
+function levelClear(){
+  score += 500;
+  state = 'clear';
+  sfxClear(); buzz(30);
+  updateHUD();
+  const t = levelTime.toFixed(1);
+  showMsg(
+    '<div class="big cy">LEVEL CLEAR</div>' +
+    '<div class="scoreline">+500 bonus · ' + t + 's</div>' +
+    '<div class="note">tap to continue</div>',
+    () => {
+      levelIdx++;
+      if (levelIdx >= LEVELS.length){ winScreen(); }
+      else { loadLevel(levelIdx); hideMsg(); state = 'playing'; }
+    }
+  );
+}
+function winScreen(){
+  best = Math.max(best, score);
+  state = 'won';
+  showMsg(
+    '<div class="big cy">ALL CLEAR</div>' +
+    '<div class="scoreline">final score <b>' + score + '</b><br>session best <b>' + best + '</b></div>' +
+    '<div class="note">the ball was never dropped. tap to run it back</div>',
+    () => startRun()
+  );
+}
+function gameOver(){
+  best = Math.max(best, score);
+  state = 'over';
+  showMsg(
+    '<div class="big rd">BALL DROPPED</div>' +
+    '<div class="scoreline">score <b>' + score + '</b> · best <b>' + best + '</b></div>' +
+    '<div class="note">tap to try again</div>',
+    () => startRun()
+  );
+}
+
+/* ================= physics ================= */
+function collide(){
+  for (const w of walls){
+    const cx = clamp(ball.x, w.x, w.x + w.w);
+    const cy = clamp(ball.y, w.y, w.y + w.h);
+    let dx = ball.x - cx, dy = ball.y - cy;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < ball.r * ball.r){
+      let d = Math.sqrt(d2), nx, ny;
+      if (d < 0.0001){ nx = 0; ny = -1; d = 0.0001; }
+      else { nx = dx / d; ny = dy / d; }
+      const push = ball.r - d;
+      ball.x += nx * push; ball.y += ny * push;
+      const vn = ball.vx * nx + ball.vy * ny;
+      if (vn < 0){
+        ball.vx -= (1 + REST) * vn * nx;
+        ball.vy -= (1 + REST) * vn * ny;
+        if (-vn > 200) sfxBounce();
+      }
+    }
+  }
+  if (ball.x < ball.r){ ball.x = ball.r; if (ball.vx < 0){ ball.vx *= -REST; sfxBounce(); } }
+  if (ball.x > VW - ball.r){ ball.x = VW - ball.r; if (ball.vx > 0){ ball.vx *= -REST; sfxBounce(); } }
+  if (ball.y < ball.r){ ball.y = ball.r; if (ball.vy < 0){ ball.vy *= -REST; sfxBounce(); } }
+  if (ball.y > VH - ball.r){ ball.y = VH - ball.r; if (ball.vy > 0){ ball.vy *= -REST; sfxBounce(); } }
+}
+
+function step(dt){
+  levelTime += dt;
+  let tx = tiltX, ty = tiltY;
+  const kt = keyTilt();
+  if (kt){ tx = kt[0]; ty = kt[1]; }
+  ball.vx += tx * ACC * dt;
+  ball.vy += ty * ACC * dt;
+
+  // gravity wells
+  for (const h of holes){
+    const dx = h.x - ball.x, dy = h.y - ball.y;
+    const d = Math.hypot(dx, dy);
+    const reach = h.r + PULL_PAD;
+    if (d < reach && d > 0.001){
+      const f = PULL_STR * (1 - d / reach);
+      ball.vx += (dx / d) * f * dt;
+      ball.vy += (dy / d) * f * dt;
+    }
+  }
+
+  const dr = Math.max(0, 1 - DRAG * dt);
+  ball.vx *= dr; ball.vy *= dr;
+  const sp = Math.hypot(ball.vx, ball.vy);
+  if (sp > MAXV){ ball.vx *= MAXV / sp; ball.vy *= MAXV / sp; }
+
+  const n = Math.min(4, Math.max(1, Math.ceil(sp * dt / 10)));
+  for (let s = 0; s < n; s++){
+    ball.x += ball.vx * dt / n;
+    ball.y += ball.vy * dt / n;
+    collide();
+  }
+
+  trail.push({ x: ball.x, y: ball.y });
+  if (trail.length > 14) trail.shift();
+
+  // holes
+  for (const h of holes){
+    const kill = h.r - BALL_R * 0.35;
+    if (dist2(ball.x, ball.y, h.x, h.y) < kill * kill){
+      fall = { h, t: 0, sx: ball.x, sy: ball.y };
+      state = 'falling';
+      sfxFall(); buzz(120);
+      return;
+    }
+  }
+  // pellets
+  const pr = BALL_R + 7;
+  for (const p of pellets){
+    if (!p.c && dist2(ball.x, ball.y, p.x, p.y) < pr * pr){
+      p.c = true; score += 100;
+      sfxCollect(); buzz(10);
+      burst(p.x, p.y, '#22d3ee', 12);
+      updateHUD();
+      if (pellets.every(q => q.c)){ levelClear(); return; }
+    }
+  }
+}
+
+function fallStep(dt){
+  fall.t += dt / FALL_TIME;
+  const e = Math.min(1, fall.t);
+  const ease = e * e;
+  ball.x = lerp(fall.sx, fall.h.x, ease);
+  ball.y = lerp(fall.sy, fall.h.y, ease);
+  ballScale = 1 - ease;
+  if (e >= 1){
+    lives--;
+    updateHUD();
+    if (lives <= 0) gameOver();
+    else respawn();
+  }
+}
+
+/* ================= particles ================= */
+function burst(x, y, col, count){
+  for (let i = 0; i < count; i++){
+    const a = Math.random() * Math.PI * 2;
+    const s = 60 + Math.random() * 180;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.35 + Math.random() * 0.25, max: 0.6, col });
+  }
+}
+function stepParticles(dt){
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.92; p.vy *= 0.92;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+/* ================= render ================= */
+function rrPath(x, y, w, h, r){
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+}
+function render(now){
+  const w = window.innerWidth, h = window.innerHeight;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#07080d';
+  ctx.fillRect(0, 0, w, h);
+  if (vig){ ctx.fillStyle = vig; ctx.fillRect(0, 0, w, h); }
+
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+
+  // field
+  rrPath(0, 0, VW, VH, 18);
+  ctx.fillStyle = '#0b0e17';
+  ctx.fill();
+  ctx.save();
+  rrPath(0, 0, VW, VH, 18);
+  ctx.clip();
+
+  // chart-paper grid
+  ctx.strokeStyle = 'rgba(140,160,220,0.055)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 30; x < VW; x += 30){ ctx.moveTo(x, 0); ctx.lineTo(x, VH); }
+  for (let y = 30; y < VH; y += 30){ ctx.moveTo(0, y); ctx.lineTo(VW, y); }
+  ctx.stroke();
+
+  // holes
+  for (const hle of holes){
+    const g = ctx.createRadialGradient(hle.x, hle.y, 1, hle.x, hle.y, hle.r + PULL_PAD);
+    g.addColorStop(0, '#000000');
+    g.addColorStop(hle.r / (hle.r + PULL_PAD), '#03040a');
+    g.addColorStop(1, 'rgba(11,14,23,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(hle.x, hle.y, hle.r + PULL_PAD, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,69,85,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(hle.x, hle.y, hle.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // walls
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  for (const wl of walls){
+    rrPath(wl.x, wl.y, wl.w, wl.h, 5);
+    ctx.fillStyle = '#232a3d';
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  for (const wl of walls){
+    rrPath(wl.x + 0.5, wl.y + 0.5, wl.w - 1, wl.h - 1, 5);
+    ctx.stroke();
+  }
+
+  // pellets
+  const t = now / 1000;
+  ctx.save();
+  ctx.shadowColor = '#22d3ee';
+  pellets.forEach((p, i) => {
+    if (p.c) return;
+    const r = 6 + Math.sin(t * 4 + i) * 1.3;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#22d3ee';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.restore();
+
+  // particles
+  for (const p of particles){
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // trail
+  trail.forEach((tp, i) => {
+    const f = (i + 1) / trail.length;
+    ctx.globalAlpha = f * 0.22;
+    ctx.fillStyle = '#ff4555';
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, BALL_R * f * 0.8, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // ball
+  if (ballScale > 0.01){
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.scale(ballScale, ballScale);
+    const bg = ctx.createRadialGradient(-4, -5, 2, 0, 0, BALL_R);
+    bg.addColorStop(0, '#ff8b96');
+    bg.addColorStop(0.55, '#ff4555');
+    bg.addColorStop(1, '#c81e33');
+    ctx.shadowColor = 'rgba(255,69,85,0.6)';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = bg;
+    ctx.beginPath(); ctx.arc(0, 0, BALL_R, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.arc(-4, -5, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // toast
+  if (toastT > 0){
+    ctx.globalAlpha = Math.min(1, toastT / 0.4);
+    ctx.fillStyle = '#e7e9f0';
+    ctx.font = '700 13px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(toastMsg, VW / 2, 36);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore(); // clip
+
+  // field border
+  rrPath(0, 0, VW, VH, 18);
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+/* ================= main loop ================= */
+let last = 0;
+function frame(t){
+  requestAnimationFrame(frame);
+  if (!last) last = t;
+  const dt = Math.min((t - last) / 1000, 1 / 30);
+  last = t;
+  if (toastT > 0) toastT -= dt;
+  if (state === 'playing') step(dt);
+  else if (state === 'falling') fallStep(dt);
+  stepParticles(dt);
+  render(t);
+}
+
+/* ================= wiring ================= */
+$('#playBtn').addEventListener('click', async () => {
+  initAudio();
+  const ok = await requestTilt();
+  if (!ok && isTouch()){
+    showMsg(
+      '<div class="big rd">NO MOTION ACCESS</div>' +
+      '<div class="note">tilt was blocked or unsupported. reload the page, tap play again, and choose <span class="warn">Allow</span> when Safari asks.</div>' +
+      '<div class="note">tap to reload</div>',
+      () => location.reload()
+    );
+    return;
+  }
+  needCal = true;      // first sensor reading after this becomes neutral
+  startRun();
+  if (!ok) toast('KEYBOARD MODE · ARROWS / WASD');
+});
+
+$('#calBtn').addEventListener('click', () => { calibrate(); toast('CALIBRATED'); });
+$('#muteBtn').addEventListener('click', function(){
+  muted = !muted;
+  this.textContent = muted ? '🔇' : '🔊';
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === 'playing'){
+    state = 'paused';
+    showMsg('<div class="big">PAUSED</div><div class="note">tap to resume</div>', () => { hideMsg(); state = 'playing'; });
+  }
+});
+document.addEventListener('touchmove', e => { if (e.target === cvs) e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+/* secure-context notice */
+if (!window.isSecureContext){
+  $('#menuNote').innerHTML = '<span class="warn">⚠ not HTTPS: iOS will block the tilt sensors.</span> host this file somewhere secure (GitHub Pages works) and open it in Safari.';
+}
+if (!isTouch()){
+  $('#menuNote').textContent = 'no touch screen detected. arrow keys / WASD tilt the table for desktop testing.';
+}
+
+/* boot */
+resize();
+loadLevel(0);
+state = 'menu';
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
