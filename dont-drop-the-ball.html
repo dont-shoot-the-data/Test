@@ -76,6 +76,17 @@
   #brand{ position:fixed; bottom:calc(env(safe-area-inset-bottom,0px) + 10px); left:0; right:0;
     text-align:center; font-size:10px; letter-spacing:.25em; color:#3c4152 !important; z-index:4; pointer-events:none; }
 
+  .btn.alt{ background:#22d3ee !important; box-shadow:0 0 30px rgba(34,211,238,.35); }
+  .linkish{ background:none !important; border:0; color:#9aa1b5 !important; font:inherit;
+    font-size:12px; letter-spacing:.18em; text-decoration:underline; padding:8px; }
+  #camWrap{ position:relative; width:min(70vw, 290px); aspect-ratio:39/64; border-radius:20px;
+    overflow:hidden; border:1px solid rgba(255,255,255,.16); background:#0b0e17 !important; }
+  #camWrap video, #camWrap canvas{ position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; }
+  #camWrap video{ transform:scaleX(-1); }
+  #camOval{ position:absolute; inset:10% 16% 34% 16%; border:2px dashed rgba(34,211,238,.55);
+    border-radius:50%; pointer-events:none; }
+
   /* ---------- Rotate prompt ---------- */
   #rotate{
     position:fixed; inset:0; z-index:60; background:#07080d !important;
@@ -105,21 +116,34 @@
 <div id="menu" class="overlay">
   <div>
     <h1>DON'T DROP<br><em>THE BALL</em></h1>
-    <div class="sub" style="margin-top:10px">a tilt gauntlet · 5 levels</div>
+    <div class="sub" style="margin-top:10px">a tilt gauntlet · 6 levels</div>
   </div>
   <div class="rules">
     <div>tilt your phone to roll the marble</div>
     <div>collect every <span class="cy">● pip</span> to clear the level</div>
     <div>the <span class="rd">◉ voids</span> pull. don't get taken</div>
+    <div>tap the screen to jump. build speed, clear the gap</div>
   </div>
-  <button id="playBtn" class="btn">ENABLE TILT &amp; PLAY</button>
+  <button id="playBtn" class="btn">TILT GAUNTLET · 6 LEVELS</button>
+  <button id="faceBtn" class="btn alt">FACE MODE · SCAN &amp; PLAY</button>
   <div class="note" id="menuNote">iOS will ask for motion access. hold the phone at a comfy angle when you tap play: that becomes neutral. ◎ recalibrates anytime.</div>
 </div>
 
 <div id="msg" class="overlay hidden"></div>
 
+<div id="cam" class="overlay hidden">
+  <div class="sub">FACE MODE</div>
+  <div id="camWrap">
+    <video id="camVid" playsinline autoplay muted></video>
+    <div id="camOval"></div>
+  </div>
+  <div class="note" id="camStatus">fit your face in the oval. the photo and the face reading never leave your phone.</div>
+  <button id="snapBtn" class="btn">SNAP</button>
+  <button id="camBack" class="linkish">back to menu</button>
+</div>
+
 <div id="rotate"><div class="ic">⟳</div><div>ROTATE TO PORTRAIT</div></div>
-<div id="brand">DON'T SHOOT THE DATA</div>
+<div id="brand">DON'T SHOOT THE DATA · V2</div>
 
 <script>
 'use strict';
@@ -140,6 +164,8 @@ const MAXV = 1050;                 // speed cap px/s
 const FALL_TIME = 0.45;            // seconds, hole swallow anim
 const PULL_PAD = 26;               // gravity-well reach beyond hole rim
 const PULL_STR = 700;              // gravity-well strength
+const JUMP_TIME = 0.5;             // seconds airborne per jump
+const JUMP_CD = 0.7;               // grounded lockout after landing
 
 /* ================= levels =================
    walls: [x, y, w, h]   holes: [x, y, r]   pellets: [x, y]  */
@@ -170,12 +196,28 @@ const LEVELS = [
     pellets:[[30,60],[195,60],[360,60],[360,280],[30,280],[30,480],[360,480],[195,480]] },
 ];
 
+// level 6: two full-width moats of voids. grounded crossing is impossible, jumping is mandatory
+(function(){
+  const m = [[195,140,20]];
+  for (let x = 20; x <= 380; x += 40){ m.push([x,220,26], [x,430,26]); }
+  LEVELS.push({ name:'THE MOATS · TAP = JUMP', start:[195,600],
+    walls:[[0,325,120,14],[270,325,120,14]],
+    holes:m,
+    pellets:[[60,80],[195,60],[330,80],[60,270],[330,270],[195,380],[60,560],[330,560]] });
+})();
+
 /* ================= state ================= */
-let state = 'menu';   // menu | playing | falling | clear | over | won | paused
+let state = 'menu';   // menu | playing | falling | clear | over | won | paused | cam
+let mode = 'run';     // run | face
+let faceImg = null;   // offscreen canvas: the snapped face board
+let lastFace = null;  // {img, eyes:[{x,y,r}], pellets:[[x,y]]} for instant retry
+let camStream = null;
+let landmarker = null;
 let levelIdx = 0, score = 0, lives = 3, best = 0, levelTime = 0;
 let walls = [], holes = [], pellets = [];
 const ball = { x:195, y:580, vx:0, vy:0, r:BALL_R };
 let ballScale = 1;
+let airT = 0, cdT = 0;
 let fall = null;
 let trail = [], particles = [];
 let toastMsg = '', toastT = 0;
@@ -286,6 +328,8 @@ const sfxCollect = () => { tone(740, .08, 'sine', .12); setTimeout(() => tone(98
 const sfxFall    = () => tone(320, .45, 'sawtooth', .14, 70);
 const sfxBounce  = () => { const n = performance.now(); if (n - lastBounceSfx > 70){ lastBounceSfx = n; tone(120, .04, 'square', .05); } };
 const sfxClear   = () => [523,659,784,1046].forEach((f,i) => setTimeout(() => tone(f, .12, 'sine', .11), i*90));
+const sfxJump    = () => tone(320, .14, 'sine', .12, 640);
+const sfxLand    = () => tone(95, .05, 'square', .06);
 const buzz = ms => { if (navigator.vibrate) navigator.vibrate(ms); };
 
 /* ================= flow ================= */
@@ -295,7 +339,7 @@ const menuEl = $('#menu'), msgEl = $('#msg');
 function updateHUD(){
   const total = pellets.length;
   const got = pellets.filter(p => p.c).length;
-  hudLevel.textContent = 'LV ' + (levelIdx + 1) + ' · ' + got + '/' + total;
+  hudLevel.textContent = (mode === 'face' ? 'FACE' : 'LV ' + (levelIdx + 1)) + ' · ' + got + '/' + total;
   hudScore.textContent = String(score).padStart(4, '0');
   hudLives.textContent = '●'.repeat(lives) + '○'.repeat(Math.max(0, 3 - lives));
 }
@@ -307,7 +351,7 @@ function loadLevel(i){
   holes   = L.holes.map(a => ({ x:a[0], y:a[1], r:a[2] }));
   pellets = L.pellets.map(a => ({ x:a[0], y:a[1], c:false }));
   ball.x = L.start[0]; ball.y = L.start[1]; ball.vx = 0; ball.vy = 0;
-  ballScale = 1; fall = null; trail = []; particles = []; levelTime = 0;
+  ballScale = 1; airT = 0; cdT = 0; fall = null; trail = []; particles = []; levelTime = 0;
   toast('LEVEL ' + (i + 1) + ' · ' + L.name);
   updateHUD();
 }
@@ -318,9 +362,10 @@ function startRun(){
   state = 'playing';
 }
 function respawn(){
-  const L = LEVELS[levelIdx];
-  ball.x = L.start[0]; ball.y = L.start[1]; ball.vx = 0; ball.vy = 0;
-  ballScale = 1; trail = [];
+  if (mode === 'face'){ ball.x = 195; ball.y = 600; }
+  else { const L = LEVELS[levelIdx]; ball.x = L.start[0]; ball.y = L.start[1]; }
+  ball.vx = 0; ball.vy = 0;
+  ballScale = 1; airT = 0; cdT = 0; trail = [];
   burst(ball.x, ball.y, '#e7e9f0', 8);
   state = 'playing';
 }
@@ -341,6 +386,16 @@ function levelClear(){
   sfxClear(); buzz(30);
   updateHUD();
   const t = levelTime.toFixed(1);
+  if (mode === 'face'){
+    best = Math.max(best, score);
+    showMsg(
+      '<div class="big cy">FACE CLEARED</div>' +
+      '<div class="scoreline">score <b>' + score + '</b> · ' + t + 's · best <b>' + best + '</b></div>' +
+      '<div class="note">every pip picked off your own head. tap for menu</div>',
+      () => backToMenu()
+    );
+    return;
+  }
   showMsg(
     '<div class="big cy">LEVEL CLEAR</div>' +
     '<div class="scoreline">+500 bonus · ' + t + 's</div>' +
@@ -365,12 +420,205 @@ function winScreen(){
 function gameOver(){
   best = Math.max(best, score);
   state = 'over';
+  if (mode === 'face'){
+    showMsg(
+      '<div class="big rd">TAKEN BY YOUR OWN EYES</div>' +
+      '<div class="scoreline">score <b>' + score + '</b> · best <b>' + best + '</b></div>' +
+      '<div class="note">tap to run the same face again</div>',
+      () => { if (lastFace){ hideMsg(); startFaceRun(lastFace); } else backToMenu(); }
+    );
+    return;
+  }
   showMsg(
     '<div class="big rd">BALL DROPPED</div>' +
     '<div class="scoreline">score <b>' + score + '</b> · best <b>' + best + '</b></div>' +
     '<div class="note">tap to try again</div>',
     () => startRun()
   );
+}
+function backToMenu(){
+  hideMsg();
+  mode = 'run'; faceImg = null;
+  loadLevel(0);
+  state = 'menu';
+  menuEl.classList.remove('hidden');
+}
+
+/* ================= face mode ================= */
+const camEl = $('#cam'), camVid = $('#camVid'), camWrap = $('#camWrap');
+const camStatus = $('#camStatus'), snapBtn = $('#snapBtn');
+
+function camSay(t){ camStatus.textContent = t; }
+
+async function openCamera(){
+  menuEl.classList.add('hidden'); hideMsg();
+  camEl.classList.remove('hidden');
+  state = 'cam';
+  snapBtn.disabled = false; snapBtn.textContent = 'SNAP';
+  camWrap.querySelectorAll('canvas').forEach(c => c.remove());
+  camVid.style.display = '';
+  camSay('fit your face in the oval. the photo and the face reading never leave your phone.');
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 } }, audio: false
+    });
+    camVid.srcObject = camStream;
+    await camVid.play().catch(() => {});
+  } catch (err){
+    camSay('camera blocked. allow camera access for this site in Safari, then tap back and try again.');
+    snapBtn.disabled = true;
+  }
+}
+function closeCamera(){
+  if (camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  camVid.srcObject = null;
+  camEl.classList.add('hidden');
+}
+
+// cover-crop the mirrored video frame into a 2x board-aspect canvas
+function snapFrame(){
+  const vw = camVid.videoWidth || 720, vh = camVid.videoHeight || 1280;
+  const off = document.createElement('canvas');
+  off.width = VW * 2; off.height = VH * 2;
+  const o = off.getContext('2d');
+  const s = Math.max(off.width / vw, off.height / vh);
+  const dw = vw * s, dh = vh * s;
+  const dx = (off.width - dw) / 2, dy = (off.height - dh) / 2;
+  o.translate(off.width, 0); o.scale(-1, 1);
+  o.drawImage(camVid, dx, dy, dw, dh);
+  o.setTransform(1, 0, 0, 1, 0, 0);
+  return off;
+}
+
+async function loadLandmarker(){
+  if (landmarker) return landmarker;
+  const base = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+  let mod;
+  try { mod = await import(base + '/vision_bundle.mjs'); }
+  catch (e1){ mod = await import(base + '/+esm'); }
+  const files = await mod.FilesetResolver.forVisionTasks(base + '/wasm');
+  landmarker = await mod.FaceLandmarker.createFromOptions(files, {
+    baseOptions: { modelAssetPath:
+      'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task' },
+    runningMode: 'IMAGE',
+    numFaces: 1
+  });
+  return landmarker;
+}
+function withTimeout(p, ms){
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+}
+
+function eyeFromCorners(lms, a, b){
+  const ax = lms[a].x * VW, ay = lms[a].y * VH;
+  const bx = lms[b].x * VW, by = lms[b].y * VH;
+  return { x:(ax + bx) / 2, y:(ay + by) / 2, w: Math.hypot(bx - ax, by - ay) };
+}
+function faceFromLandmarks(lms){
+  // iris centers when present (478-point model), else eye-corner midpoints
+  const eL = eyeFromCorners(lms, 33, 133);
+  const eR = eyeFromCorners(lms, 362, 263);
+  const c1 = lms[468] ? { x: lms[468].x * VW, y: lms[468].y * VH } : eL;
+  const c2 = lms[473] ? { x: lms[473].x * VW, y: lms[473].y * VH } : eR;
+  const r1 = clamp(eL.w * 0.75, 18, 30), r2 = clamp(eR.w * 0.75, 18, 30);
+  const eyes = [{ x:c1.x, y:c1.y, r:r1 }, { x:c2.x, y:c2.y, r:r2 }];
+  // pips on landmarks: forehead, bridge (greed pip), nose tip, chin, cheeks, temples
+  const ids = [10, 168, 1, 152, 205, 425, 127, 356];
+  const pips = [];
+  for (const i of ids){
+    if (!lms[i]) continue;
+    const px = clamp(lms[i].x * VW, 24, VW - 24);
+    const py = clamp(lms[i].y * VH, 24, VH - 24);
+    if (eyes.some(e => dist2(px, py, e.x, e.y) < Math.pow(e.r + BALL_R + 6, 2))) continue;
+    if (pips.some(p => dist2(px, py, p[0], p[1]) < 30 * 30)) continue;
+    pips.push([px, py]);
+  }
+  return { eyes, pips };
+}
+// no landmarks? build the board geometrically from two tapped eye points
+function faceFromTaps(p1, p2){
+  const eyes = [{ x:p1.x, y:p1.y, r:24 }, { x:p2.x, y:p2.y, r:24 }];
+  const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+  const d = Math.max(60, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+  const raw = [
+    [mx, my - d * 0.9], [mx, my], [mx, my + d * 0.8], [mx, my + d * 2.0],
+    [p1.x - d * 0.5, p1.y + d * 0.9], [p2.x + d * 0.5, p2.y + d * 0.9],
+    [p1.x - d * 0.8, p1.y], [p2.x + d * 0.8, p2.y]
+  ];
+  const pips = [];
+  for (const q of raw){
+    const px = clamp(q[0], 24, VW - 24), py = clamp(q[1], 24, VH - 24);
+    if (eyes.some(e => dist2(px, py, e.x, e.y) < Math.pow(e.r + BALL_R + 6, 2))) continue;
+    if (pips.some(p => dist2(px, py, p[0], p[1]) < 30 * 30)) continue;
+    pips.push([px, py]);
+  }
+  return { eyes, pips };
+}
+
+function startFaceRun(face){
+  lastFace = face;
+  score = 0; lives = 3;
+  walls = [];
+  holes = face.eyes.map(e => ({ x:e.x, y:e.y, r:e.r }));
+  pellets = face.pellets.map(p => ({ x:p[0], y:p[1], c:false }));
+  faceImg = face.img;
+  ball.x = 195; ball.y = 600; ball.vx = 0; ball.vy = 0;
+  ballScale = 1; airT = 0; cdT = 0; fall = null; trail = []; particles = []; levelTime = 0;
+  closeCamera(); hideMsg(); menuEl.classList.add('hidden');
+  state = 'playing';
+  toast('THE EYES ARE VOIDS');
+  updateHUD();
+}
+
+let manualTaps = null;
+function beginManualEyes(img){
+  manualTaps = [];
+  camVid.style.display = 'none';
+  if (camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  img.style.position = 'absolute'; img.style.inset = '0';
+  img.style.width = '100%'; img.style.height = '100%';
+  camWrap.appendChild(img);
+  snapBtn.disabled = true;
+  camSay('auto-detect unavailable. tap ONE of your eyes on the photo.');
+}
+camWrap.addEventListener('pointerdown', e => {
+  if (!manualTaps || state !== 'cam') return;
+  const r = camWrap.getBoundingClientRect();
+  const x = clamp((e.clientX - r.left) / r.width, 0, 1) * VW;
+  const y = clamp((e.clientY - r.top) / r.height, 0, 1) * VH;
+  manualTaps.push({ x, y });
+  burstlessPing();
+  if (manualTaps.length === 1){ camSay('now tap the OTHER eye.'); }
+  else if (manualTaps.length >= 2){
+    const img = camWrap.querySelector('canvas');
+    const f = faceFromTaps(manualTaps[0], manualTaps[1]);
+    manualTaps = null;
+    startFaceRun({ img, eyes: f.eyes, pellets: f.pips });
+  }
+});
+function burstlessPing(){ tone(600, .06, 'sine', .1); }
+
+async function snapAndDetect(){
+  if (!camVid.videoWidth){ camSay('camera not ready yet. give it a second.'); return; }
+  snapBtn.disabled = true; snapBtn.textContent = 'READING…';
+  camSay('reading your face on-device. first scan downloads the face model (~4 MB).');
+  const img = snapFrame();
+  if (camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  camVid.style.display = 'none';
+  img.style.position = 'absolute'; img.style.inset = '0';
+  img.style.width = '100%'; img.style.height = '100%';
+  camWrap.appendChild(img);
+  try {
+    const lm = await withTimeout(loadLandmarker(), 15000);
+    const res = lm.detect(img);
+    const lms = res && res.faceLandmarks && res.faceLandmarks[0];
+    if (!lms || lms.length < 200) throw new Error('no face');
+    const f = faceFromLandmarks(lms);
+    if (f.pips.length < 3) throw new Error('bad pips');
+    startFaceRun({ img, eyes: f.eyes, pellets: f.pips });
+  } catch (err){
+    beginManualEyes(img);
+  }
 }
 
 /* ================= physics ================= */
@@ -402,14 +650,21 @@ function collide(){
 
 function step(dt){
   levelTime += dt;
+  const wasAir = airT > 0;
+  if (airT > 0) airT -= dt;
+  else if (cdT > 0) cdT -= dt;
+  const air = airT > 0;
+  if (wasAir && !air){ sfxLand(); burst(ball.x, ball.y, '#9aa1b5', 6); }
+
   let tx = tiltX, ty = tiltY;
   const kt = keyTilt();
   if (kt){ tx = kt[0]; ty = kt[1]; }
-  ball.vx += tx * ACC * dt;
-  ball.vy += ty * ACC * dt;
+  const ctl = air ? 0.5 : 1;      // less steering mid-air
+  ball.vx += tx * ACC * ctl * dt;
+  ball.vy += ty * ACC * ctl * dt;
 
-  // gravity wells
-  for (const h of holes){
+  // gravity wells (no pull while airborne)
+  if (!air) for (const h of holes){
     const dx = h.x - ball.x, dy = h.y - ball.y;
     const d = Math.hypot(dx, dy);
     const reach = h.r + PULL_PAD;
@@ -420,7 +675,7 @@ function step(dt){
     }
   }
 
-  const dr = Math.max(0, 1 - DRAG * dt);
+  const dr = Math.max(0, 1 - (air ? DRAG * 0.3 : DRAG) * dt);
   ball.vx *= dr; ball.vy *= dr;
   const sp = Math.hypot(ball.vx, ball.vy);
   if (sp > MAXV){ ball.vx *= MAXV / sp; ball.vy *= MAXV / sp; }
@@ -435,8 +690,8 @@ function step(dt){
   trail.push({ x: ball.x, y: ball.y });
   if (trail.length > 14) trail.shift();
 
-  // holes
-  for (const h of holes){
+  // holes (airborne = flying over them; land in one and it takes you)
+  if (!air) for (const h of holes){
     const kill = h.r - BALL_R * 0.35;
     if (dist2(ball.x, ball.y, h.x, h.y) < kill * kill){
       fall = { h, t: 0, sx: ball.x, sy: ball.y };
@@ -471,6 +726,12 @@ function fallStep(dt){
     if (lives <= 0) gameOver();
     else respawn();
   }
+}
+
+function jump(){
+  if (state !== 'playing' || airT > 0 || cdT > 0) return;
+  airT = JUMP_TIME; cdT = JUMP_CD;
+  sfxJump(); buzz(15);
 }
 
 /* ================= particles ================= */
@@ -513,6 +774,12 @@ function render(now){
   ctx.save();
   rrPath(0, 0, VW, VH, 18);
   ctx.clip();
+
+  if (mode === 'face' && faceImg){
+    ctx.drawImage(faceImg, 0, 0, VW, VH);
+    ctx.fillStyle = 'rgba(7,8,13,0.38)';
+    ctx.fillRect(0, 0, VW, VH);
+  }
 
   // chart-paper grid
   ctx.strokeStyle = 'rgba(140,160,220,0.055)';
@@ -592,9 +859,17 @@ function render(now){
 
   // ball
   if (ballScale > 0.01){
+    const jp = airT > 0 ? Math.sin((1 - airT / JUMP_TIME) * Math.PI) : 0;
+    if (jp > 0){
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath();
+      ctx.ellipse(ball.x, ball.y + 6, BALL_R * (1 - jp * 0.45), BALL_R * 0.5 * (1 - jp * 0.45), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.save();
-    ctx.translate(ball.x, ball.y);
-    ctx.scale(ballScale, ballScale);
+    ctx.translate(ball.x, ball.y - jp * 16);
+    const js = ballScale * (1 + jp * 0.35);
+    ctx.scale(js, js);
     const bg = ctx.createRadialGradient(-4, -5, 2, 0, 0, BALL_R);
     bg.addColorStop(0, '#ff8b96');
     bg.addColorStop(0.55, '#ff4555');
@@ -643,7 +918,7 @@ function frame(t){
 }
 
 /* ================= wiring ================= */
-$('#playBtn').addEventListener('click', async () => {
+async function beginMode(){
   initAudio();
   const ok = await requestTilt();
   if (!ok && isTouch()){
@@ -653,18 +928,33 @@ $('#playBtn').addEventListener('click', async () => {
       '<div class="note">tap to reload</div>',
       () => location.reload()
     );
-    return;
+    return false;
   }
   needCal = true;      // first sensor reading after this becomes neutral
-  startRun();
   if (!ok) toast('KEYBOARD MODE · ARROWS / WASD');
+  return true;
+}
+$('#playBtn').addEventListener('click', async () => {
+  if (!(await beginMode())) return;
+  mode = 'run';
+  startRun();
 });
+$('#faceBtn').addEventListener('click', async () => {
+  if (!(await beginMode())) return;
+  mode = 'face';
+  openCamera();
+});
+snapBtn.addEventListener('click', snapAndDetect);
+$('#camBack').addEventListener('click', () => { manualTaps = null; closeCamera(); backToMenu(); });
 
 $('#calBtn').addEventListener('click', () => { calibrate(); toast('CALIBRATED'); });
 $('#muteBtn').addEventListener('click', function(){
   muted = !muted;
   this.textContent = muted ? '🔇' : '🔊';
 });
+
+cvs.addEventListener('pointerdown', e => { e.preventDefault(); jump(); });
+window.addEventListener('keydown', e => { if (e.code === 'Space'){ e.preventDefault(); jump(); } });
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === 'playing'){
